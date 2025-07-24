@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Familien-Fluchkasse</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #app-wrapper {
+            height: 100%;
+            overflow-y: auto;
+        }
+        .account-card {
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .account-card:hover {
+            transform: translateY(-3px);
+        }
+        .balance {
+            font-weight: 900;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+        }
+        #history-list::-webkit-scrollbar { width: 8px; }
+        #history-list::-webkit-scrollbar-track { background: #f9fafb; }
+        #history-list::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+        #history-list::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- Sound-Aktivierungs-Overlay -->
+    <div id="sound-gate" class="fixed inset-0 bg-gray-800 bg-opacity-95 flex flex-col justify-center items-center z-50">
+        <div class="text-center p-4">
+            <h1 class="text-white text-4xl sm:text-5xl font-bold mb-4">Fluchkasse</h1>
+            <p class="text-gray-300 text-lg sm:text-xl mb-8">Klicke, um die Kasse zu öffnen.</p>
+            <button id="start-app-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-10 rounded-xl text-xl sm:text-2xl transform hover:scale-105 transition-transform">
+                Starten
+            </button>
+        </div>
+    </div>
+
+    <div id="app-wrapper" class="opacity-0 transition-opacity duration-500">
+        <div id="app-container" class="min-h-full w-full flex flex-wrap justify-center items-center content-center gap-4 p-4">
+            <!-- Account-Karten und Verlaufskachel werden hier eingefügt -->
+        </div>
+    </div>
+
+    <!-- Passwort-Modal -->
+    <div id="password-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-40 p-4">
+        <div class="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl w-full max-w-sm mx-auto">
+            <h2 class="text-xl sm:text-2xl font-bold mb-4 text-center">Passwort erforderlich</h2>
+            <p class="text-center mb-6 text-gray-600 text-sm sm:text-base">Bitte gib das Passwort ein.</p>
+            <input type="password" id="password-input" class="w-full p-3 border-2 border-gray-300 rounded-lg text-center text-lg sm:text-xl tracking-widest focus:outline-none focus:border-indigo-500" placeholder="••••">
+            <div id="password-error" class="text-red-500 text-sm text-center mt-2 h-5"></div>
+            <div class="flex gap-4 mt-6">
+                <button id="cancel-undo" class="w-full bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-3 px-4 rounded-lg">Abbrechen</button>
+                <button id="confirm-undo" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg">Bestätigen</button>
+            </div>
+        </div>
+    </div>
+
+    <audio id="kaching-sound" src="https://actions.google.com/sounds/v1/coins/cash_register.ogg" preload="auto"></audio>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc, increment, serverTimestamp, getDoc, collection, addDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "YOUR_API_KEY", authDomain: "YOUR_AUTH_DOMAIN", projectId: "YOUR_PROJECT_ID" };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'curse-jar-default';
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        const accounts = [
+            { name: 'Mama', amount: 2, color: 'bg-pink-500', hover: 'hover:bg-pink-600' },
+            { name: 'Miro', amount: 1, color: 'bg-green-500', hover: 'hover:bg-green-600' },
+            { name: 'Mara', amount: 1, color: 'bg-yellow-500', hover: 'hover:bg-yellow-600' },
+            { name: 'Mira', amount: 1, color: 'bg-purple-500', hover: 'hover:bg-purple-600' },
+            { name: 'Papa', amount: 2, color: 'bg-blue-500', hover: 'hover:bg-blue-600' }
+        ];
+        const UNDO_PASSWORD = "cash";
+        
+        const soundGate = document.getElementById('sound-gate');
+        const startAppButton = document.getElementById('start-app-button');
+        const appWrapper = document.getElementById('app-wrapper');
+        const appContainer = document.getElementById('app-container');
+        const passwordModal = document.getElementById('password-modal');
+        const passwordInput = document.getElementById('password-input');
+        const passwordError = document.getElementById('password-error');
+        const confirmUndoBtn = document.getElementById('confirm-undo');
+        const cancelUndoBtn = document.getElementById('cancel-undo');
+        const kachingSound = document.getElementById('kaching-sound');
+        
+        let historyList;
+        let user = null;
+        let activeUndoRequest = null;
+
+        function playKachingSound() {
+            kachingSound.currentTime = 0;
+            kachingSound.play().catch(error => console.error("Audio-Wiedergabefehler:", error));
+        }
+
+        function renderLayout() {
+            appContainer.innerHTML = '';
+            
+            accounts.forEach(acc => {
+                const card = document.createElement('div');
+                // Kleinere Kacheln und Schriftarten
+                card.className = `account-card w-full max-w-[240px] sm:w-56 bg-white rounded-xl shadow-md p-4 flex flex-col items-center gap-2 border-t-4 ${acc.color.replace('bg-', 'border-')}`;
+                card.innerHTML = `
+                    <h2 class="text-2xl font-bold text-gray-700">${acc.name}</h2>
+                    <div id="balance-${acc.name}" class="balance text-5xl text-gray-900">0,00</div>
+                    <p class="text-gray-500 text-sm">Euro</p>
+                    <div class="w-full mt-2 flex flex-col gap-2">
+                        <button class="btn-add w-full text-white font-bold py-2 px-4 rounded-lg text-lg ${acc.color} ${acc.hover}" data-name="${acc.name}" data-amount="${acc.amount}">
+                            + ${acc.amount},00 €
+                        </button>
+                        <button class="btn-undo w-full bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-1 px-3 rounded-md text-xs" data-name="${acc.name}" data-amount="${acc.amount}">
+                            Rückgängig
+                        </button>
+                    </div>
+                `;
+                appContainer.appendChild(card);
+            });
+
+            // Verlaufs-Kachel mit hellem Design
+            const historyCard = document.createElement('div');
+            historyCard.className = 'account-card w-full max-w-[240px] sm:w-56 bg-white rounded-xl shadow-md p-4 flex flex-col gap-2 border-t-4 border-gray-300';
+            historyCard.innerHTML = `
+                <h2 class="text-2xl font-bold text-gray-700">Verlauf</h2>
+                <div id="history-list" class="w-full h-40 bg-gray-50 rounded-md p-1 overflow-y-auto">
+                    <!-- Verlaufseinträge -->
+                </div>
+            `;
+            appContainer.appendChild(historyCard);
+
+            historyList = document.getElementById('history-list');
+        }
+
+        async function addTransaction(name, amount, type) {
+            if (!user) return;
+            
+            const transactionsColRef = collection(db, `artifacts/${appId}/public/data/transactions`);
+            await addDoc(transactionsColRef, {
+                name: name,
+                amount: amount,
+                type: type,
+                timestamp: serverTimestamp()
+            });
+
+            const accountDocRef = doc(db, `artifacts/${appId}/public/data/curse-accounts`, name);
+            const docSnap = await getDoc(accountDocRef);
+            if (docSnap.exists()) {
+                await updateDoc(accountDocRef, { balance: increment(amount) });
+            } else {
+                await setDoc(accountDocRef, { balance: amount, name: name });
+            }
+        }
+
+        function setupAccountListeners() {
+            accounts.forEach(acc => {
+                const docRef = doc(db, `artifacts/${appId}/public/data/curse-accounts`, acc.name);
+                onSnapshot(docRef, (doc) => {
+                    const balanceEl = document.getElementById(`balance-${acc.name}`);
+                    if (balanceEl) {
+                        const data = doc.data();
+                        const balance = data && data.balance ? data.balance : 0;
+                        balanceEl.textContent = balance.toFixed(2).replace('.', ',');
+                    }
+                }, async (error) => {
+                    const docSnap = await getDoc(docRef);
+                    if (!docSnap.exists()) {
+                        await setDoc(docRef, { name: acc.name, balance: 0 });
+                    }
+                });
+            });
+        }
+
+        function setupHistoryListener() {
+            const transactionsColRef = collection(db, `artifacts/${appId}/public/data/transactions`);
+            const q = query(transactionsColRef, orderBy("timestamp", "desc"));
+
+            onSnapshot(q, (snapshot) => {
+                if (!historyList) return;
+                historyList.innerHTML = '';
+                if (snapshot.empty) {
+                    historyList.innerHTML = `<p class="text-gray-400 text-center p-4 text-sm">Noch keine Einträge.</p>`;
+                    return;
+                }
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const timestamp = data.timestamp ? data.timestamp.toDate() : new Date();
+                    const timeString = timestamp.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+                    const dateString = timestamp.toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit'});
+
+                    const isUndo = data.type === 'undo';
+                    // Dunklere Farben für besseren Kontrast auf hellem Grund
+                    const amountColor = isUndo ? 'text-green-600' : 'text-red-600';
+                    const amountSign = isUndo ? '' : '+';
+
+                    const entry = document.createElement('div');
+                    entry.className = 'flex justify-between items-center p-1.5 border-b border-gray-200';
+                    entry.innerHTML = `
+                        <div>
+                            <p class="font-bold text-sm text-gray-800">${data.name}</p>
+                            <p class="text-xs text-gray-500">${dateString} - ${timeString}</p>
+                        </div>
+                        <p class="font-bold text-sm ${amountColor}">${amountSign}${data.amount.toFixed(2).replace('.', ',')} €</p>
+                    `;
+                    historyList.appendChild(entry);
+                });
+            });
+        }
+        
+        function setupEventListeners() {
+            appContainer.addEventListener('click', (e) => {
+                const target = e.target.closest('button');
+                if (!target) return;
+                const { name, amount } = target.dataset;
+                if (target.classList.contains('btn-add')) {
+                    playKachingSound();
+                    addTransaction(name, parseFloat(amount), 'add');
+                }
+                if (target.classList.contains('btn-undo')) {
+                    activeUndoRequest = { name, amount: parseFloat(amount) };
+                    passwordModal.classList.remove('hidden');
+                    passwordInput.focus();
+                    passwordInput.value = '';
+                    passwordError.textContent = '';
+                }
+            });
+            cancelUndoBtn.addEventListener('click', () => {
+                passwordModal.classList.add('hidden');
+                activeUndoRequest = null;
+            });
+            confirmUndoBtn.addEventListener('click', () => {
+                if (passwordInput.value === UNDO_PASSWORD) {
+                    if (activeUndoRequest) {
+                        const { name, amount } = activeUndoRequest;
+                        addTransaction(name, -amount, 'undo');
+                    }
+                    passwordModal.classList.add('hidden');
+                    activeUndoRequest = null;
+                } else {
+                    passwordError.textContent = 'Falsches Passwort!';
+                    passwordInput.classList.add('border-red-500');
+                    setTimeout(() => {
+                        passwordError.textContent = '';
+                        passwordInput.classList.remove('border-red-500');
+                    }, 2000);
+                }
+            });
+            passwordInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') confirmUndoBtn.click();
+            });
+        }
+        
+        async function main() {
+            renderLayout();
+            setupEventListeners();
+            
+            onAuthStateChanged(auth, async (currentUser) => {
+                if (currentUser) {
+                    user = currentUser;
+                    setupAccountListeners();
+                    setupHistoryListener();
+                }
+            });
+
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Fehler bei der Authentifizierung:", error);
+            }
+        }
+
+        startAppButton.addEventListener('click', () => {
+            kachingSound.play().catch(e => {});
+            kachingSound.pause();
+            kachingSound.currentTime = 0;
+
+            soundGate.style.display = 'none';
+            appWrapper.style.opacity = '1';
+
+            main();
+        }, { once: true });
+    </script>
+</body>
+</html>
