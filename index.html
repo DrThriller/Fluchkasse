@@ -72,12 +72,21 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc, increment, serverTimestamp, getDoc, collection, addDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "YOUR_API_KEY", authDomain: "YOUR_AUTH_DOMAIN", projectId: "YOUR_PROJECT_ID" };
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'curse-jar-default';
+        // ===================================================================================
+        // Firebase Konfiguration wurde eingefügt
+        // ===================================================================================
+        const firebaseConfig = {
+          apiKey: "AIzaSyArylkQPoxr2ECBcXqGyFTM9dPkxLH9XYs",
+          authDomain: "fluchkasse-60784.firebaseapp.com",
+          projectId: "fluchkasse-60784",
+          storageBucket: "fluchkasse-60784.appspot.com",
+          messagingSenderId: "36009314978",
+          appId: "1:36009314978:web:3fd89c80e22ba84dffa5fb"
+        };
+        // ===================================================================================
         
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
@@ -117,7 +126,6 @@
             
             accounts.forEach(acc => {
                 const card = document.createElement('div');
-                // Kleinere Kacheln und Schriftarten
                 card.className = `account-card w-full max-w-[240px] sm:w-56 bg-white rounded-xl shadow-md p-4 flex flex-col items-center gap-2 border-t-4 ${acc.color.replace('bg-', 'border-')}`;
                 card.innerHTML = `
                     <h2 class="text-2xl font-bold text-gray-700">${acc.name}</h2>
@@ -135,7 +143,6 @@
                 appContainer.appendChild(card);
             });
 
-            // Verlaufs-Kachel mit hellem Design
             const historyCard = document.createElement('div');
             historyCard.className = 'account-card w-full max-w-[240px] sm:w-56 bg-white rounded-xl shadow-md p-4 flex flex-col gap-2 border-t-4 border-gray-300';
             historyCard.innerHTML = `
@@ -152,7 +159,7 @@
         async function addTransaction(name, amount, type) {
             if (!user) return;
             
-            const transactionsColRef = collection(db, `artifacts/${appId}/public/data/transactions`);
+            const transactionsColRef = collection(db, `transactions`);
             await addDoc(transactionsColRef, {
                 name: name,
                 amount: amount,
@@ -160,7 +167,7 @@
                 timestamp: serverTimestamp()
             });
 
-            const accountDocRef = doc(db, `artifacts/${appId}/public/data/curse-accounts`, name);
+            const accountDocRef = doc(db, `curse-accounts`, name);
             const docSnap = await getDoc(accountDocRef);
             if (docSnap.exists()) {
                 await updateDoc(accountDocRef, { balance: increment(amount) });
@@ -171,7 +178,7 @@
 
         function setupAccountListeners() {
             accounts.forEach(acc => {
-                const docRef = doc(db, `artifacts/${appId}/public/data/curse-accounts`, acc.name);
+                const docRef = doc(db, `curse-accounts`, acc.name);
                 onSnapshot(docRef, (doc) => {
                     const balanceEl = document.getElementById(`balance-${acc.name}`);
                     if (balanceEl) {
@@ -189,7 +196,7 @@
         }
 
         function setupHistoryListener() {
-            const transactionsColRef = collection(db, `artifacts/${appId}/public/data/transactions`);
+            const transactionsColRef = collection(db, `transactions`);
             const q = query(transactionsColRef, orderBy("timestamp", "desc"));
 
             onSnapshot(q, (snapshot) => {
@@ -206,7 +213,6 @@
                     const dateString = timestamp.toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit'});
 
                     const isUndo = data.type === 'undo';
-                    // Dunklere Farben für besseren Kontrast auf hellem Grund
                     const amountColor = isUndo ? 'text-green-600' : 'text-red-600';
                     const amountSign = isUndo ? '' : '+';
 
@@ -271,22 +277,13 @@
             renderLayout();
             setupEventListeners();
             
-            onAuthStateChanged(auth, async (currentUser) => {
-                if (currentUser) {
-                    user = currentUser;
-                    setupAccountListeners();
-                    setupHistoryListener();
-                }
-            });
-
             try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                user = (await signInAnonymously(auth)).user;
+                setupAccountListeners();
+                setupHistoryListener();
             } catch (error) {
                 console.error("Fehler bei der Authentifizierung:", error);
+                alert("Authentifizierung fehlgeschlagen. Bitte überprüfe deine Firebase-Konfiguration und die autorisierten Domains.")
             }
         }
 
