@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fluchkasse - Übersicht</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .dashboard-card {
+            display: flex;
+            flex-direction: column;
+        }
+        .dashboard-card-content {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        .dashboard-card-content::-webkit-scrollbar { width: 8px; }
+        .dashboard-card-content::-webkit-scrollbar-track { background: #f9fafb; }
+        .dashboard-card-content::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+        .dashboard-card-content::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+        .ranking-item {
+            transition: background-color 0.2s, transform 0.2s, box-shadow 0.2s;
+        }
+        .ranking-item:first-child {
+            transform: scale(1.02);
+            box-shadow: 0 5px 10px -3px rgba(239, 68, 68, 0.15), 0 2px 4px -1px rgba(239, 68, 68, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 sm:p-6 max-w-7xl">
+
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-5xl font-black text-gray-800">Fluchkasse</h1>
+            <p class="text-md sm:text-lg text-gray-500 mt-2">Der aktuelle Stand der Dinge</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Ranking Sektion -->
+            <div class="dashboard-card bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                <h2 class="text-xl sm:text-2xl font-bold mb-4 text-center flex-shrink-0">Rangliste</h2>
+                <div class="dashboard-card-content h-80">
+                    <div id="ranking-list" class="space-y-3 pr-2">
+                        <div class="text-center pt-8 text-gray-500">Lade Daten...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Grafik Sektion -->
+            <div class="dashboard-card bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                <h2 class="text-xl sm:text-2xl font-bold mb-4 text-center flex-shrink-0">Vergleich</h2>
+                <div class="dashboard-card-content h-80 relative">
+                    <canvas id="balanceChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- History Sektion -->
+            <div class="dashboard-card bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                <h2 class="text-xl sm:text-2xl font-bold mb-4 text-center flex-shrink-0">Verlauf</h2>
+                <div id="history-list" class="dashboard-card-content h-80 bg-gray-50 rounded-lg p-2">
+                    <!-- Verlaufseinträge werden hier dynamisch eingefügt -->
+                </div>
+            </div>
+
+        </main>
+        
+        <footer class="text-center mt-8 text-gray-400 text-sm">
+            <p>Daten werden in Echtzeit aktualisiert.</p>
+        </footer>
+
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyArylkQPoxr2ECBcXqGyFTM9dPkxLH9XYs",
+          authDomain: "fluchkasse-60784.firebaseapp.com",
+          projectId: "fluchkasse-60784",
+          storageBucket: "fluchkasse-60784.appspot.com",
+          messagingSenderId: "36009314978",
+          appId: "1:36009314978:web:3fd89c80e22ba84dffa5fb"
+        };
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        const accountDetails = {
+            'Mama': { color: 'rgba(236, 72, 153, 0.7)', borderColor: 'rgb(236, 72, 153)' },
+            'Papa': { color: 'rgba(59, 130, 246, 0.7)', borderColor: 'rgb(59, 130, 246)' },
+            'Miro': { color: 'rgba(34, 197, 94, 0.7)', borderColor: 'rgb(34, 197, 94)' },
+            'Mara': { color: 'rgba(234, 179, 8, 0.7)', borderColor: 'rgb(234, 179, 8)' },
+            'Mira': { color: 'rgba(168, 85, 247, 0.7)', borderColor: 'rgb(168, 85, 247)' }
+        };
+
+        const rankingList = document.getElementById('ranking-list');
+        const chartCanvas = document.getElementById('balanceChart');
+        const historyList = document.getElementById('history-list');
+        let balanceChart = null;
+
+        function updateRanking(accounts) {
+            rankingList.innerHTML = '';
+            if (accounts.length === 0) {
+                 rankingList.innerHTML = '<div class="text-center p-8 text-gray-500">Keine Daten gefunden.</div>';
+                 return;
+            }
+            accounts.forEach((acc, index) => {
+                const rank = index + 1;
+                let rankColor = 'bg-gray-200 text-gray-700';
+                if (rank === 1) rankColor = 'bg-red-500 text-white';
+                if (rank === 2) rankColor = 'bg-orange-400 text-white';
+                if (rank === 3) rankColor = 'bg-yellow-400 text-white';
+                const item = document.createElement('div');
+                item.className = 'ranking-item flex items-center p-2 sm:p-3 bg-gray-50 rounded-lg shadow-sm';
+                item.innerHTML = `
+                    <div class="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 ${rankColor} rounded-full flex items-center justify-center font-bold text-sm sm:text-lg">${rank}</div>
+                    <div class="flex-grow ml-3 sm:ml-4">
+                        <p class="font-bold text-md sm:text-lg">${acc.name}</p>
+                    </div>
+                    <div class="text-lg sm:text-xl font-black text-gray-800">
+                        ${acc.balance.toFixed(2).replace('.', ',')} €
+                    </div>
+                `;
+                rankingList.appendChild(item);
+            });
+        }
+
+        function updateChart(accounts) {
+            const labels = accounts.map(acc => acc.name);
+            const data = accounts.map(acc => acc.balance);
+            const backgroundColors = accounts.map(acc => accountDetails[acc.name]?.color || 'rgba(156, 163, 175, 0.7)');
+            const borderColors = accounts.map(acc => accountDetails[acc.name]?.borderColor || 'rgb(156, 163, 175)');
+            if (balanceChart) {
+                balanceChart.data.labels = labels;
+                balanceChart.data.datasets[0].data = data;
+                balanceChart.data.datasets[0].backgroundColor = backgroundColors;
+                balanceChart.data.datasets[0].borderColor = borderColors;
+                balanceChart.update();
+            } else {
+                const ctx = chartCanvas.getContext('2d');
+                balanceChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Kontostand in €',
+                            data: data,
+                            backgroundColor: backgroundColors,
+                            borderColor: borderColors,
+                            borderWidth: 2,
+                            borderRadius: 6,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        scales: {
+                            x: { beginAtZero: true, grid: { display: true, color: '#e5e7eb' } },
+                            y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+                        },
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            }
+        }
+
+        function setupHistoryListener() {
+            const transactionsColRef = collection(db, "transactions");
+            const q = query(transactionsColRef, orderBy("timestamp", "desc"));
+            onSnapshot(q, (snapshot) => {
+                historyList.innerHTML = '';
+                if (snapshot.empty) {
+                    historyList.innerHTML = `<p class="text-gray-400 text-center p-4 text-sm">Noch keine Einträge.</p>`;
+                    return;
+                }
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const timestamp = data.timestamp ? data.timestamp.toDate() : new Date();
+                    const timeString = timestamp.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+                    const dateString = timestamp.toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit'});
+                    const isUndo = data.type === 'undo';
+                    const amountColor = isUndo ? 'text-green-600' : 'text-red-600';
+                    const amountSign = isUndo ? '' : '+';
+                    const entry = document.createElement('div');
+                    entry.className = 'flex justify-between items-center p-1.5 border-b border-gray-200';
+                    entry.innerHTML = `
+                        <div>
+                            <p class="font-bold text-sm text-gray-800">${data.name}</p>
+                            <p class="text-xs text-gray-500">${dateString} - ${timeString}</p>
+                        </div>
+                        <p class="font-bold text-sm ${amountColor}">${amountSign}${data.amount.toFixed(2).replace('.', ',')} €</p>
+                    `;
+                    historyList.appendChild(entry);
+                });
+            });
+        }
+
+        async function main() {
+            try {
+                await signInAnonymously(auth);
+                const accountsColRef = collection(db, "curse-accounts");
+                onSnapshot(accountsColRef, (snapshot) => {
+                    const accounts = [];
+                    snapshot.forEach(doc => {
+                        accounts.push({ id: doc.id, ...doc.data() });
+                    });
+                    const sortedAccounts = accounts.sort((a, b) => b.balance - a.balance);
+                    updateRanking(sortedAccounts);
+                    updateChart(sortedAccounts);
+                });
+                setupHistoryListener();
+            } catch (error) {
+                console.error("Fehler bei der Authentifizierung oder Datenabfrage:", error);
+                rankingList.innerHTML = '<div class="text-center p-8 text-red-500">Fehler beim Laden der Daten.</div>';
+            }
+        }
+
+        main();
+    </script>
+</body>
+</html>
